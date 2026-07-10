@@ -9,9 +9,19 @@ from this module so the logic lives in one place.
 
 import os
 import tempfile
+import warnings
 from functools import lru_cache
 
 import torch
+
+# Suppress warnings early
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+
+# Set environment variables for optimization
+os.environ["KMP_DUPLICATE_LIB_OK"] = "True"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 import whisper
 from gtts import gTTS
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
@@ -21,27 +31,39 @@ from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 WHISPER_MODEL_NAME = os.getenv("WHISPER_MODEL", "tiny")
 CORRECTION_MODEL_NAME = os.getenv("CORRECTION_MODEL", "google/flan-t5-small")
 
+# Ensure CPU-only torch on Streamlit Cloud
+device = "cpu"
+print(f"Using device: {device}")
+
 
 @lru_cache(maxsize=1)
 def get_whisper_model():
-    print(f"Loading Whisper model '{WHISPER_MODEL_NAME}'...")
-    model = whisper.load_model(WHISPER_MODEL_NAME)
-    print("Whisper model loaded")
-    return model
+    try:
+        print(f"Loading Whisper model '{WHISPER_MODEL_NAME}'...")
+        model = whisper.load_model(WHISPER_MODEL_NAME, device=device)
+        print("✓ Whisper model loaded successfully")
+        return model
+    except Exception as e:
+        print(f"✗ Failed to load Whisper model: {e}")
+        raise
 
 
 @lru_cache(maxsize=1)
 def get_correction_model():
     """Return (tokenizer, model) or (None, None) if loading fails."""
     try:
+        print(f"Loading correction model '{CORRECTION_MODEL_NAME}'...")
         tokenizer = AutoTokenizer.from_pretrained(CORRECTION_MODEL_NAME)
         model = AutoModelForSeq2SeqLM.from_pretrained(
-            CORRECTION_MODEL_NAME, torch_dtype="auto"
+            CORRECTION_MODEL_NAME,
+            torch_dtype=torch.float32,
+            low_cpu_mem_usage=True,
         )
-        print("Correction model loaded")
+        model.to(device)
+        print("✓ Correction model loaded successfully")
         return tokenizer, model
     except Exception as e:  # noqa: BLE001 - model download is best-effort
-        print(f"Correction model failed to load, continuing without it: {e}")
+        print(f"⚠ Correction model failed to load, continuing without it: {e}")
         return None, None
 
 
@@ -55,14 +77,17 @@ def speech_to_text(audio):
         return ""
 
     try:
-        result = get_whisper_model().transcribe(
+        model = get_whisper_model()
+        result = model.transcribe(
             audio,
             task="translate",
-            fp16=torch.cuda.is_available(),
+            fp16=False,  # Disable fp16 on CPU
         )
         return result["text"].strip()
     except Exception as e:  # noqa: BLE001 - surface errors to the UI
-        return f"Speech recognition error: {e}"
+        error_msg = f"Speech recognition error: {str(e)}"
+        print(f"✗ {error_msg}")
+        return error_msg
 
 
 def fix_text(text):
@@ -94,7 +119,7 @@ def fix_text(text):
         result = tokenizer.decode(outputs[0], skip_special_tokens=True)
         return result.strip() or text
     except Exception as e:  # noqa: BLE001 - fall back to raw text
-        print(f"Text correction error: {e}")
+        print(f"⚠ Text correction error: {e}")
         return text
 
 
@@ -120,7 +145,10 @@ def text_to_voice(text):
 
         return audio_file.name
     except Exception as e:  # noqa: BLE001 - surface TTS failures gracefully
-        print(f"Text-to-speech error: {e}")
+        print(f"✗ Text-to-speech error: {e}")
         if audio_file and os.path.exists(audio_file.name):
-            os.unlink(audio_file.name)
+            try:
+                os.unlink(audio_file.name)
+            except Exception as cleanup_error:
+                print(f"⚠ Failed to clean up temp file: {cleanup_error}")
         return None
