@@ -4,13 +4,28 @@ Voice -> Text -> AI Correction -> Human Voice. Core logic lives in
 ``pipeline.py``. This is the entrypoint used for Streamlit Community Cloud.
 """
 
+import os
 import tempfile
+import warnings
 
 import streamlit as st
 
+# Suppress warnings early
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+
+# Set environment variables for optimization
+os.environ["KMP_DUPLICATE_LIB_OK"] = "True"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 from pipeline import process_voice, text_to_voice
 
-st.set_page_config(page_title="AI Voice Recovery Agent", page_icon="🎤")
+st.set_page_config(
+    page_title="AI Voice Recovery Agent",
+    page_icon="🎤",
+    layout="centered",
+    initial_sidebar_state="collapsed",
+)
 
 st.title("🎤 AI Voice Recovery Agent")
 st.caption("Voice → Text → AI Correction → Human Voice")
@@ -50,9 +65,13 @@ with upload_tab:
 if st.button("🚀 Process Voice", type="primary", disabled=audio is None):
     path = _save_upload(audio)
     with st.spinner("Transcribing and correcting..."):
-        raw, corrected = process_voice(path)
-    st.session_state.raw = raw
-    st.session_state.corrected = corrected
+        try:
+            raw, corrected = process_voice(path)
+            st.session_state.raw = raw
+            st.session_state.corrected = corrected
+            st.success("✅ Voice processed successfully!")
+        except Exception as e:
+            st.error(f"❌ Error processing voice: {str(e)}")
 
 if st.session_state.raw:
     st.subheader("2. Review & edit the text")
@@ -65,18 +84,22 @@ if st.session_state.raw:
     st.subheader("3. Generate the human voice")
     if st.button("🔊 Generate Human Voice", type="secondary"):
         with st.spinner("Generating natural voice..."):
-            mp3_path = text_to_voice(st.session_state.corrected)
-        if mp3_path:
-            st.audio(mp3_path, format="audio/mp3")
-            with open(mp3_path, "rb") as fh:
-                st.download_button(
-                    "⬇️ Download voice (MP3)",
-                    data=fh,
-                    file_name="recovered_voice.mp3",
-                    mime="audio/mpeg",
-                )
-        else:
-            st.error("Could not generate audio. Please try again.")
+            try:
+                mp3_path = text_to_voice(st.session_state.corrected)
+                if mp3_path:
+                    st.audio(mp3_path, format="audio/mp3")
+                    with open(mp3_path, "rb") as fh:
+                        st.download_button(
+                            "⬇️ Download voice (MP3)",
+                            data=fh,
+                            file_name="recovered_voice.mp3",
+                            mime="audio/mpeg",
+                        )
+                    st.success("✅ Voice generated successfully!")
+                else:
+                    st.error("Could not generate audio. Please try again.")
+            except Exception as e:
+                st.error(f"❌ Error generating voice: {str(e)}")
 
 st.divider()
 st.caption("💡 Tip: for best results, speak clearly in a quiet environment.")
