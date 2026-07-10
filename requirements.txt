@@ -1,0 +1,6 @@
+gradio==4.44.1
+openai-whisper==20231117
+transformers==4.44.2
+torch==2.4.1
+gtts==2.5.3
+sentencepiece==0.2.0

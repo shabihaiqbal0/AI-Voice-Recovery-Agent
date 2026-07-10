@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+*.mp3
+*.wav
+.gradio/
+.DS_Store
+*.egg-info/
+.pytest_cache/
