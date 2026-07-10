@@ -1,4 +1,4 @@
-"""Unit tests for the AI Voice Recovery Agent.
+"""Unit tests for the AI Voice Recovery pipeline.
 
 The heavy ML models (Whisper, FLAN-T5) are mocked so the suite runs fast,
 offline and without a GPU.
@@ -8,24 +8,24 @@ import os
 
 import pytest
 
-import app
+import pipeline
 
 
 @pytest.fixture(autouse=True)
 def clear_caches():
     """Ensure lazy-loaded model caches don't leak between tests."""
-    app.get_whisper_model.cache_clear()
-    app.get_correction_model.cache_clear()
+    pipeline.get_whisper_model.cache_clear()
+    pipeline.get_correction_model.cache_clear()
     yield
-    app.get_whisper_model.cache_clear()
-    app.get_correction_model.cache_clear()
+    pipeline.get_whisper_model.cache_clear()
+    pipeline.get_correction_model.cache_clear()
 
 
 # ---------- speech_to_text ----------
 
 def test_speech_to_text_empty_input_returns_empty():
-    assert app.speech_to_text(None) == ""
-    assert app.speech_to_text("") == ""
+    assert pipeline.speech_to_text(None) == ""
+    assert pipeline.speech_to_text("") == ""
 
 
 def test_speech_to_text_forces_english_translation(monkeypatch):
@@ -37,9 +37,9 @@ def test_speech_to_text_forces_english_translation(monkeypatch):
             captured["audio"] = audio
             return {"text": "  hello world  "}
 
-    monkeypatch.setattr(app, "get_whisper_model", lambda: FakeWhisper())
+    monkeypatch.setattr(pipeline, "get_whisper_model", lambda: FakeWhisper())
 
-    assert app.speech_to_text("clip.wav") == "hello world"
+    assert pipeline.speech_to_text("clip.wav") == "hello world"
     # English output is guaranteed by Whisper's translate task.
     assert captured["task"] == "translate"
     assert captured["audio"] == "clip.wav"
@@ -50,20 +50,20 @@ def test_speech_to_text_handles_errors(monkeypatch):
         def transcribe(self, *a, **k):
             raise RuntimeError("decode failure")
 
-    monkeypatch.setattr(app, "get_whisper_model", lambda: Boom())
-    result = app.speech_to_text("clip.wav")
+    monkeypatch.setattr(pipeline, "get_whisper_model", lambda: Boom())
+    result = pipeline.speech_to_text("clip.wav")
     assert "Speech recognition error" in result
 
 
 # ---------- fix_text ----------
 
 def test_fix_text_empty_returns_empty():
-    assert app.fix_text("") == ""
+    assert pipeline.fix_text("") == ""
 
 
 def test_fix_text_passthrough_when_model_unavailable(monkeypatch):
-    monkeypatch.setattr(app, "get_correction_model", lambda: (None, None))
-    assert app.fix_text("some text") == "some text"
+    monkeypatch.setattr(pipeline, "get_correction_model", lambda: (None, None))
+    assert pipeline.fix_text("some text") == "some text"
 
 
 def test_fix_text_uses_model_output(monkeypatch):
@@ -79,9 +79,9 @@ def test_fix_text_uses_model_output(monkeypatch):
             return [[1, 2, 3]]
 
     monkeypatch.setattr(
-        app, "get_correction_model", lambda: (FakeTokenizer(), FakeModel())
+        pipeline, "get_correction_model", lambda: (FakeTokenizer(), FakeModel())
     )
-    assert app.fix_text("corectd sentance") == "Corrected sentence."
+    assert pipeline.fix_text("corectd sentance") == "Corrected sentence."
 
 
 def test_fix_text_falls_back_on_error(monkeypatch):
@@ -90,17 +90,17 @@ def test_fix_text_falls_back_on_error(monkeypatch):
             raise ValueError("tokenize failure")
 
     monkeypatch.setattr(
-        app, "get_correction_model", lambda: (BadTokenizer(), object())
+        pipeline, "get_correction_model", lambda: (BadTokenizer(), object())
     )
-    assert app.fix_text("keep me") == "keep me"
+    assert pipeline.fix_text("keep me") == "keep me"
 
 
 # ---------- process_voice ----------
 
 def test_process_voice_runs_full_pipeline(monkeypatch):
-    monkeypatch.setattr(app, "speech_to_text", lambda audio: "raw text")
-    monkeypatch.setattr(app, "fix_text", lambda text: text.upper())
-    raw, corrected = app.process_voice("clip.wav")
+    monkeypatch.setattr(pipeline, "speech_to_text", lambda audio: "raw text")
+    monkeypatch.setattr(pipeline, "fix_text", lambda text: text.upper())
+    raw, corrected = pipeline.process_voice("clip.wav")
     assert raw == "raw text"
     assert corrected == "RAW TEXT"
 
@@ -108,8 +108,8 @@ def test_process_voice_runs_full_pipeline(monkeypatch):
 # ---------- text_to_voice ----------
 
 def test_text_to_voice_empty_returns_none():
-    assert app.text_to_voice("") is None
-    assert app.text_to_voice("   ") is None
+    assert pipeline.text_to_voice("") is None
+    assert pipeline.text_to_voice("   ") is None
 
 
 def test_text_to_voice_creates_mp3(monkeypatch):
@@ -124,9 +124,9 @@ def test_text_to_voice_creates_mp3(monkeypatch):
             with open(path, "wb") as fh:
                 fh.write(b"ID3fake-mp3-bytes")
 
-    monkeypatch.setattr(app, "gTTS", FakeGTTS)
+    monkeypatch.setattr(pipeline, "gTTS", FakeGTTS)
 
-    path = app.text_to_voice("hello there")
+    path = pipeline.text_to_voice("hello there")
     try:
         assert path is not None
         assert path.endswith(".mp3")
@@ -143,14 +143,14 @@ def test_text_to_voice_handles_failure(monkeypatch):
         def __init__(self, *a, **k):
             raise RuntimeError("network down")
 
-    monkeypatch.setattr(app, "gTTS", BadGTTS)
-    assert app.text_to_voice("hello") is None
+    monkeypatch.setattr(pipeline, "gTTS", BadGTTS)
+    assert pipeline.text_to_voice("hello") is None
 
 
-# ---------- UI construction ----------
+# ---------- Gradio UI (optional) ----------
 
 def test_build_demo_constructs_blocks():
-    demo = app.build_demo()
-    import gradio as gr
+    gr = pytest.importorskip("gradio")
+    import app
 
-    assert isinstance(demo, gr.Blocks)
+    assert isinstance(app.build_demo(), gr.Blocks)
