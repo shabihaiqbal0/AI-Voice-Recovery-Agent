@@ -155,20 +155,27 @@ def main():
     st.markdown("---")
     
     # Audio input
-    audio_file = st.audio_input("🎙️ Record or Upload Voice")
+    audio_file = st.file_uploader("🎙️ Upload Voice Recording", type=['wav', 'mp3', 'ogg', 'flac', 'm4a'])
     
     # Process button
     if st.button("🚀 Process Voice", type="primary", use_container_width=True):
         if audio_file is not None:
             with st.spinner("Processing audio..."):
-                # Get file path from uploaded file
-                audio_path = audio_file.name if hasattr(audio_file, 'name') else audio_file
+                # Save uploaded file to temp location
+                temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+                temp_audio.write(audio_file.read())
+                temp_audio.close()
+                audio_path = temp_audio.name
                 
                 # Transcribe
                 raw_text = speech_to_text(audio_path)
                 
                 # Correct
                 corrected_text = fix_text(raw_text)
+                
+                # Clean up temp file
+                if os.path.exists(audio_path):
+                    os.unlink(audio_path)
                 
                 # Display results
                 col1, col2 = st.columns(2)
